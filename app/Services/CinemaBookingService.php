@@ -7,39 +7,32 @@ use App\Models\Movie;
 use App\Models\MovieBooking;
 use App\Models\Seat;
 use App\Models\Showtime;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 
 class CinemaBookingService
 {
     public function createCinemaHall(array $data): CinemaHall
     {
-        return DB::transaction(function () use ($data) {
-            $hallNumber = trim(strip_tags($data['hall_number']));
-            $seatCodes = collect($data['seat_codes'] ?? [])
-                ->map(fn (string $seatCode) => strtoupper(trim(strip_tags($seatCode))))
-                ->values();
+        $attributes = $this->sanitizeFields($data, ['hall_number']);
+        if (array_key_exists('seat_codes', $data)) {
+            $attributes['seat_codes'] = $this->sanitizeSeatCodes($data['seat_codes']);
+        }
 
-            if ($hallNumber === '') {
-                throw ValidationException::withMessages([
-                    'hall_number' => 'Enter a valid hall number.',
-                ]);
-            }
+        $attributes = Validator::make($attributes, [
+            'hall_number' => ['required', 'string', 'max:20', 'regex:/^\d+$/'],
+            'seat_codes' => ['sometimes', 'array'],
+            'seat_codes.*' => ['required', 'string', 'max:10'],
+        ])->validate();
 
-            if ($seatCodes->contains('')) {
-                throw ValidationException::withMessages([
-                    'seat_codes' => 'Seat codes cannot be blank.',
-                ]);
-            }
+        $seatCodes = collect($attributes['seat_codes'] ?? []);
+        $this->ensureUniqueSeatCodes($seatCodes);
 
-            if ($seatCodes->unique()->count() !== $seatCodes->count()) {
-                throw ValidationException::withMessages([
-                    'seat_codes' => 'Seat codes must be unique after trimming and formatting.',
-                ]);
-            }
-
+        return DB::transaction(function () use ($attributes, $seatCodes) {
             $hall = CinemaHall::create([
-                'hall_number' => $hallNumber,
+                'hall_number' => $attributes['hall_number'],
             ]);
 
             $hall->seats()->createMany($seatCodes
@@ -52,15 +45,17 @@ class CinemaBookingService
 
     public function createMovie(array $data): Movie
     {
-        $attributes = $this->sanitizeMovie($data);
+        $attributes = $this->validateMovie($data);
 
         return DB::transaction(fn () => Movie::create($attributes));
     }
 
     public function updateMovie(Movie $movie, array $data): Movie
     {
-        return DB::transaction(function () use ($movie, $data) {
-            $movie->update($this->sanitizeMovie($data));
+        $attributes = $this->validateMovie($data, true);
+
+        return DB::transaction(function () use ($movie, $attributes) {
+            $movie->update($attributes);
 
             return $movie->refresh();
         });
@@ -68,37 +63,50 @@ class CinemaBookingService
 
     public function updateCinemaHall(CinemaHall $cinemaHall, array $data): CinemaHall
     {
-        return DB::transaction(function () use ($cinemaHall, $data) {
+        $attributes = $this->sanitizeFields($data, ['hall_number']);
+        if (array_key_exists('seat_codes', $data)) {
+            $attributes['seat_codes'] = $this->sanitizeSeatCodes($data['seat_codes']);
+        }
+
+        $attributes = Validator::make($attributes, [
+            'hall_number' => ['sometimes', 'required', 'string', 'max:20', 'regex:/^\d+$/'],
+            'seat_codes' => ['sometimes', 'array'],
+            'seat_codes.*' => ['required', 'string', 'max:10'],
+        ])->validate();
+        $seatCodes = array_key_exists('seat_codes', $attributes)
+            ? collect($attributes['seat_codes'])
+            : null;
+
+        if ($seatCodes !== null) {
+            $this->ensureUniqueSeatCodes($seatCodes);
+        }
+
+        return DB::transaction(function () use ($cinemaHall, $attributes, $seatCodes) {
             $cinemaHall = CinemaHall::query()->lockForUpdate()->findOrFail($cinemaHall->id);
 
-            if (isset($data['hall_number'])) {
-                $hallNumber = trim(strip_tags($data['hall_number']));
-
-                if ($hallNumber === '') {
-                    throw ValidationException::withMessages([
-                        'hall_number' => 'Enter a valid hall number.',
-                    ]);
-                }
-
+            if (array_key_exists('hall_number', $attributes)) {
                 $cinemaHall->update([
-                    'hall_number' => $hallNumber,
+                    'hall_number' => $attributes['hall_number'],
                 ]);
             }
 
-            if (isset($data['seat_codes'])) {
-                $seatCodes = collect($data['seat_codes'])
-                    ->map(fn (string $seatCode) => strtoupper(trim(strip_tags($seatCode))))
-                    ->values();
-
-                if ($seatCodes->contains('') || $seatCodes->unique()->count() !== $seatCodes->count()) {
-                    throw ValidationException::withMessages([
-                        'seat_codes' => 'Seat codes must be non-empty and unique after trimming and formatting.',
-                    ]);
-                }
-
+            if ($seatCodes !== null) {
                 $existingSeats = $cinemaHall->seats()->lockForUpdate()->get();
-                $removedSeats = $existingSeats->reject(fn (Seat $seat) => $seatCodes->contains($seat->seat_code));
-                $reservedSeat = $removedSeats->first(fn (Seat $seat) => $seat->bookings()->exists());
+                $requestedSeatCodes = $seatCodes->flip();
+                $existingSeatsByCode = $existingSeats->keyBy('seat_code');
+                $removedSeats = $existingSeats->reject(
+                    fn (Seat $seat) => $requestedSeatCodes->has($seat->seat_code),
+                );
+                $reservedSeatIds = $removedSeats->isEmpty()
+                    ? collect()
+                    : MovieBooking::query()
+                        ->whereIn('seat_id', $removedSeats->modelKeys())
+                        ->distinct()
+                        ->pluck('seat_id')
+                        ->flip();
+                $reservedSeat = $removedSeats->first(
+                    fn (Seat $seat) => $reservedSeatIds->has($seat->id),
+                );
 
                 if ($reservedSeat) {
                     throw ValidationException::withMessages([
@@ -109,9 +117,7 @@ class CinemaBookingService
                 $removedSeats->each->delete();
 
                 foreach ($seatCodes as $seatCode) {
-                    $existingSeat = $existingSeats->firstWhere('seat_code', $seatCode);
-
-                    if ($existingSeat) {
+                    if ($existingSeatsByCode->has($seatCode)) {
                         continue;
                     }
 
@@ -125,14 +131,17 @@ class CinemaBookingService
 
     public function createShowtime(array $data): Showtime
     {
-        return DB::transaction(fn () => Showtime::create($this->sanitizeShowtime($data)));
+        $attributes = $this->validateShowtime($data);
+
+        return DB::transaction(fn () => Showtime::create($attributes));
     }
 
     public function updateShowtime(Showtime $showtime, array $data): Showtime
     {
-        return DB::transaction(function () use ($showtime, $data) {
+        $updates = $this->validateShowtime($data, true);
+
+        return DB::transaction(function () use ($showtime, $updates) {
             $showtime = Showtime::query()->lockForUpdate()->findOrFail($showtime->id);
-            $updates = $this->sanitizeShowtime($data);
 
             if (
                 isset($updates['cinema_hall_id'])
@@ -152,84 +161,172 @@ class CinemaBookingService
 
     public function createMovieBooking(array $data): MovieBooking
     {
-        return DB::transaction(function () use ($data) {
+        $attributes = $this->validateMovieBooking($data);
+
+        return DB::transaction(function () use ($attributes) {
             [$showtime, $seat] = $this->lockAndValidateSeat(
-                (int) $data['showtime_id'],
-                (int) $data['seat_id'],
+                (int) $attributes['showtime_id'],
+                (int) $attributes['seat_id'],
+                null,
+                true,
             );
-            $ticketType = $data['ticket_type'];
+            $ticketType = $attributes['ticket_type'];
 
             return MovieBooking::create([
-                'customer_email' => strtolower(trim(strip_tags($data['customer_email']))),
+                'customer_email' => $attributes['customer_email'],
                 'showtime_id' => $showtime->id,
                 'seat_id' => $seat->id,
                 'ticket_type' => $ticketType,
+                'payment_method' => $attributes['payment_method'] ?? null,
                 'total_amount' => $this->ticketPrice($ticketType),
-                'payment_status' => $data['payment_status'] ?? 'pending',
+                'payment_status' => 'pending',
             ]);
         });
     }
 
     public function updateMovieBooking(MovieBooking $booking, array $data): MovieBooking
     {
-        return DB::transaction(function () use ($booking, $data) {
-            $showtimeId = (int) ($data['showtime_id'] ?? $booking->showtime_id);
-            $seatId = (int) ($data['seat_id'] ?? $booking->seat_id);
+        $attributes = $this->validateMovieBooking($data, true);
+
+        return DB::transaction(function () use ($booking, $attributes) {
+            $booking = MovieBooking::query()->lockForUpdate()->findOrFail($booking->booking_id);
+            $showtimeId = (int) ($attributes['showtime_id'] ?? $booking->showtime_id);
+            $seatId = (int) ($attributes['seat_id'] ?? $booking->seat_id);
             [$showtime, $seat] = $this->lockAndValidateSeat($showtimeId, $seatId, $booking->booking_id);
-            $ticketType = $data['ticket_type'] ?? $booking->ticket_type;
+            $ticketType = $attributes['ticket_type'] ?? $booking->ticket_type;
 
             $booking->update([
-                'customer_email' => strtolower(trim(strip_tags($data['customer_email'] ?? $booking->customer_email))),
+                'customer_email' => $attributes['customer_email'] ?? $booking->customer_email,
                 'showtime_id' => $showtime->id,
                 'seat_id' => $seat->id,
                 'ticket_type' => $ticketType,
+                'payment_method' => $attributes['payment_method'] ?? $booking->payment_method,
                 'total_amount' => $this->ticketPrice($ticketType),
-                'payment_status' => $data['payment_status'] ?? $booking->payment_status,
+                'payment_status' => $attributes['payment_status'] ?? $booking->payment_status,
             ]);
 
             return $booking->refresh();
         });
     }
 
-    private function sanitizeShowtime(array $data): array
+    private function validateShowtime(array $data, bool $isUpdate = false): array
     {
-        return array_intersect_key($data, array_flip([
+        $attributes = $this->sanitizeFields($data, [
             'movie_id',
             'cinema_hall_id',
             'showtime_start',
-        ]));
+        ]);
+        $fieldRule = $isUpdate ? 'sometimes' : 'required';
+
+        return Validator::make($attributes, [
+            'movie_id' => [$fieldRule, 'integer', 'exists:movies,id'],
+            'cinema_hall_id' => [$fieldRule, 'integer', 'exists:cinema_halls,id'],
+            'showtime_start' => [$fieldRule, 'date', 'after:now'],
+        ])->validate();
     }
 
-    private function sanitizeMovie(array $data): array
+    private function validateMovie(array $data, bool $isUpdate = false): array
     {
-        $attributes = [];
+        $attributes = $this->sanitizeFields($data, ['title', 'rating']);
+        $fieldRule = $isUpdate ? 'sometimes' : 'required';
 
-        foreach (['title', 'rating'] as $field) {
-            if (! array_key_exists($field, $data)) {
-                continue;
+        return Validator::make($attributes, [
+            'title' => [$fieldRule, 'string', 'max:255'],
+            'rating' => [$fieldRule, 'string', 'max:10', 'regex:/^\d+(?:\.\d+)?$/'],
+        ])->validate();
+    }
+
+    private function validateMovieBooking(array $data, bool $isUpdate = false): array
+    {
+        $attributes = $this->sanitizeFields($data, [
+            'customer_email',
+            'showtime_id',
+            'seat_id',
+            'ticket_type',
+            'payment_method',
+            'payment_status',
+        ]);
+
+        if (isset($attributes['customer_email']) && is_string($attributes['customer_email'])) {
+            $attributes['customer_email'] = strtolower($attributes['customer_email']);
+        }
+
+        foreach (['ticket_type', 'payment_method', 'payment_status'] as $field) {
+            if (isset($attributes[$field]) && is_string($attributes[$field])) {
+                $attributes[$field] = strtolower($attributes[$field]);
             }
+        }
 
-            $value = trim(strip_tags($data[$field]));
+        $fieldRule = $isUpdate ? 'sometimes' : 'required';
+        $rules = [
+            'customer_email' => [$fieldRule, 'email', 'max:255'],
+            'showtime_id' => [$fieldRule, 'integer', 'exists:showtimes,id'],
+            'seat_id' => [$fieldRule, 'integer', 'exists:seats,id'],
+            'ticket_type' => [$fieldRule, 'string', 'in:'.implode(',', array_keys(config('cinema.ticket_types')))],
+            'payment_method' => ['sometimes', 'required', 'string', 'in:card,ewallet,cash'],
+        ];
 
-            if ($value === '') {
-                throw ValidationException::withMessages([
-                    $field => "Enter a valid movie {$field}.",
-                ]);
+        $rules['payment_status'] = $isUpdate
+            ? ['sometimes', 'required', 'string', 'in:'.implode(',', config('cinema.payment_statuses'))]
+            : ['prohibited'];
+
+        return Validator::make($attributes, $rules)->validate();
+    }
+
+    private function sanitizeFields(array $data, array $fields): array
+    {
+        $attributes = array_intersect_key($data, array_flip($fields));
+
+        foreach ($attributes as $field => $value) {
+            if (is_string($value)) {
+                $attributes[$field] = trim(strip_tags($value));
             }
-
-            $attributes[$field] = $value;
         }
 
         return $attributes;
     }
 
+    private function sanitizeSeatCodes(mixed $seatCodes): mixed
+    {
+        if (! is_array($seatCodes)) {
+            return $seatCodes;
+        }
+
+        return array_map(
+            fn ($seatCode) => is_string($seatCode)
+                ? strtoupper(trim(strip_tags($seatCode)))
+                : $seatCode,
+            $seatCodes,
+        );
+    }
+
+    private function ensureUniqueSeatCodes(Collection $seatCodes): void
+    {
+        if ($seatCodes->unique()->count() !== $seatCodes->count()) {
+            throw ValidationException::withMessages([
+                'seat_codes' => 'Seat codes must be unique after trimming and formatting.',
+            ]);
+        }
+    }
+
     /**
      * @return array{Showtime, Seat}
      */
-    private function lockAndValidateSeat(int $showtimeId, int $seatId, ?int $exceptBookingId = null): array
+    private function lockAndValidateSeat(
+        int $showtimeId,
+        int $seatId,
+        ?int $exceptBookingId = null,
+        bool $requireUpcoming = false,
+    ): array
     {
         $showtime = Showtime::query()->lockForUpdate()->findOrFail($showtimeId);
         $seat = Seat::query()->lockForUpdate()->findOrFail($seatId);
+
+        if ($requireUpcoming && $showtime->showtime_start->isPast()) {
+            throw ValidationException::withMessages([
+                'showtime_id' => 'Choose an upcoming showtime.',
+            ]);
+        }
 
         if ($seat->cinema_hall_id !== $showtime->cinema_hall_id) {
             throw ValidationException::withMessages([

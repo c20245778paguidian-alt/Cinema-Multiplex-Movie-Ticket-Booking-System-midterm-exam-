@@ -6,6 +6,20 @@ use Illuminate\Foundation\Http\FormRequest;
 
 class UpdateMovieRequest extends FormRequest
 {
+    protected function prepareForValidation(): void
+    {
+        $normalized = [];
+
+        foreach (['title', 'rating'] as $field) {
+            $value = $this->input($field);
+            if (is_string($value)) {
+                $normalized[$field] = trim(strip_tags($value));
+            }
+        }
+
+        $this->merge($normalized);
+    }
+
     public function authorize(): bool
     {
         return $this->user() !== null;
@@ -15,7 +29,7 @@ class UpdateMovieRequest extends FormRequest
     {
         return [
             'title' => ['sometimes', 'required', 'string', 'max:255'],
-            'rating' => ['sometimes', 'required', 'string', 'max:10'],
+            'rating' => ['sometimes', 'required', 'string', 'max:10', 'regex:/^\d+(?:\.\d+)?$/'],
         ];
     }
 
@@ -24,6 +38,7 @@ class UpdateMovieRequest extends FormRequest
         return [
             'title.required' => 'Enter a movie title.',
             'rating.required' => 'Choose a movie rating.',
+            'rating.regex' => 'Rating must contain numbers only; decimals are allowed.',
         ];
     }
 }

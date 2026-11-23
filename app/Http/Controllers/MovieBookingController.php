@@ -14,7 +14,14 @@ class MovieBookingController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $search = trim(strip_tags((string) $request->query('search', '')));
+        $search = $request->query('search');
+        if (is_string($search)) {
+            $search = trim(strip_tags($search));
+        }
+
+        $search = validator(['search' => $search], [
+            'search' => ['sometimes', 'nullable', 'string', 'max:100'],
+        ])->validate()['search'] ?? '';
 
         $bookings = MovieBooking::query()
             ->with(['showtime.movie', 'showtime.cinemaHall', 'seat'])
@@ -42,8 +49,18 @@ class MovieBookingController extends Controller
                 ->orderBy('showtime_start')
                 ->get(),
             'ticket_types' => config('cinema.ticket_types'),
+            'payment_methods' => ['card', 'ewallet', 'cash'],
             'payment_statuses' => config('cinema.payment_statuses'),
         ]);
+    }
+
+    public function show(string $id): JsonResponse
+    {
+        return response()->json(
+            MovieBooking::query()
+                ->with(['showtime.movie', 'showtime.cinemaHall', 'seat'])
+                ->findOrFail($id),
+        );
     }
 
     public function store(StoreMovieBookingRequest $request, CinemaBookingService $service): JsonResponse

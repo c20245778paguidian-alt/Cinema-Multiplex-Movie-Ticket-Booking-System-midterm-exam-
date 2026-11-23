@@ -8,8 +8,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import AppLayout from '@/layouts/app-layout';
 import { type BreadcrumbItem } from '@/types';
-import { Head, Link } from '@inertiajs/react';
-import { CalendarDays, Clapperboard, Clock3, Film, LoaderCircle, LogOut, Plus, Search, Ticket, Users, Wallet } from 'lucide-react';
+import { Head } from '@inertiajs/react';
+import { CalendarDays, Clapperboard, Clock3, Film, LoaderCircle, Plus, Search, Ticket, Users, Wallet } from 'lucide-react';
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 
 type Movie = {
@@ -73,11 +73,19 @@ type ShowtimeDependencies = {
     cinema_halls: CinemaHall[];
 };
 
+type DashboardStats = {
+    total_movies: number;
+    total_bookings: number;
+    available_seats: number;
+    total_revenue: number;
+};
+
 type DashboardData = {
     bookings: Paginated<MovieBooking>;
     showtimes: Paginated<Showtime>;
     bookingDependencies: BookingDependencies;
     showtimeDependencies: ShowtimeDependencies;
+    stats: DashboardStats;
 };
 
 const breadcrumbs: BreadcrumbItem[] = [{ title: 'Dashboard', href: '/dashboard' }];
@@ -131,6 +139,45 @@ function formatDateTimeLocal(value: string): string {
     date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
 
     return date.toISOString().slice(0, 16);
+}
+
+function minimumShowtimeLocal(): string {
+    const date = new Date();
+    date.setSeconds(0, 0);
+    date.setMinutes(date.getMinutes() + 1);
+
+    return formatDateTimeLocal(date.toISOString());
+}
+
+function futureDateTimeISO(value: string): string | null {
+    const date = new Date(value);
+
+    return Number.isNaN(date.getTime()) || date.getTime() <= Date.now() ? null : date.toISOString();
+}
+
+function parseSeatCodes(value: string): string[] {
+    return value
+        .split(/[,\s]+/)
+        .map((seatCode) => seatCode.trim())
+        .filter(Boolean);
+}
+
+function seatCodesError(seatCodes: string[]): string | null {
+    if (seatCodes.length === 0) return 'Add at least one seat code.';
+    if (seatCodes.some((seatCode) => seatCode.length > 10)) return 'Each seat code must be 10 characters or fewer.';
+    if (new Set(seatCodes.map((seatCode) => seatCode.toUpperCase())).size !== seatCodes.length) {
+        return 'Seat codes must be unique, ignoring letter case.';
+    }
+
+    return null;
+}
+
+function isNumericRating(value: string): boolean {
+    return /^\d+(?:\.\d+)?$/.test(value.trim());
+}
+
+function isNumericHallNumber(value: string): boolean {
+    return /^\d+$/.test(value.trim());
 }
 
 function statusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
@@ -229,15 +276,16 @@ export default function Dashboard() {
         setError(null);
 
         try {
-            const [bookings, showtimes, bookingDependencies, showtimeDependencies] = await Promise.all([
+            const [bookings, showtimes, bookingDependencies, showtimeDependencies, stats] = await Promise.all([
                 requestJson<Paginated<MovieBooking>>(bookingsUrl),
                 requestJson<Paginated<Showtime>>(showtimesUrl),
                 requestJson<BookingDependencies>('/movie-bookings/create'),
                 requestJson<ShowtimeDependencies>('/showtimes/create'),
+                requestJson<DashboardStats>('/dashboard/stats'),
             ]);
 
             if (currentRequest === requestVersion.current) {
-                setData({ bookings, showtimes, bookingDependencies, showtimeDependencies });
+                setData({ bookings, showtimes, bookingDependencies, showtimeDependencies, stats });
             }
         } catch (reason) {
             if (currentRequest === requestVersion.current) {
@@ -272,6 +320,8 @@ export default function Dashboard() {
         return () => window.clearTimeout(timer);
     }, [search, loadDashboard]);
 
+    const availableBookingShowtimes =
+        data?.bookingDependencies.showtimes.filter((showtime) => new Date(showtime.showtime_start).getTime() > Date.now()) ?? [];
     const selectedShowtime = data?.bookingDependencies.showtimes.find((showtime) => String(showtime.id) === bookingForm.showtime_id);
     const selectedTicketPrice = bookingForm.ticket_type ? data?.bookingDependencies.ticket_types[bookingForm.ticket_type] : undefined;
     const reservedSeatIds = new Set(
@@ -296,6 +346,7 @@ export default function Dashboard() {
                 method: 'POST',
                 body: JSON.stringify({
                     ...bookingForm,
+                    customer_email: bookingForm.customer_email.trim(),
                     showtime_id: Number(bookingForm.showtime_id),
                     seat_id: Number(bookingForm.seat_id),
                 }),
@@ -312,8 +363,14 @@ export default function Dashboard() {
 
     async function submitShowtime(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        setSubmitting(true);
         setFormError(null);
+        const showtimeStart = futureDateTimeISO(showtimeForm.showtime_start);
+        if (!showtimeStart) {
+            setFormError('Choose a valid future showtime.');
+            return;
+        }
+
+        setSubmitting(true);
         const shouldResumeBooking = resumeBookingAfterShowtime;
 
         try {
@@ -322,7 +379,7 @@ export default function Dashboard() {
                 body: JSON.stringify({
                     movie_id: Number(showtimeForm.movie_id),
                     cinema_hall_id: Number(showtimeForm.cinema_hall_id),
-                    showtime_start: new Date(showtimeForm.showtime_start).toISOString(),
+                    showtime_start: showtimeStart,
                 }),
             });
             setShowtimeDialogOpen(false);
@@ -339,12 +396,23 @@ export default function Dashboard() {
 
     async function submitMovie(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
+        if (!isNumericRating(movieForm.rating)) {
+            setFormError('Rating must contain numbers only; decimals are allowed.');
+            return;
+        }
+
         setSubmitting(true);
         setFormError(null);
         const shouldResumeShowtime = resumeShowtimeAfterCatalog;
 
         try {
-            await requestJson<Movie>('/movies', { method: 'POST', body: JSON.stringify(movieForm) });
+            await requestJson<Movie>('/movies', {
+                method: 'POST',
+                body: JSON.stringify({
+                    title: movieForm.title.trim(),
+                    rating: movieForm.rating.trim(),
+                }),
+            });
             setMovieDialogOpen(false);
             setResumeShowtimeAfterCatalog(false);
             setMovieForm({ title: '', rating: '' });
@@ -359,19 +427,28 @@ export default function Dashboard() {
 
     async function submitHall(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        setSubmitting(true);
         setFormError(null);
+        if (!isNumericHallNumber(hallForm.hall_number)) {
+            setFormError('Hall number must contain digits only.');
+            return;
+        }
+
+        const seatCodes = parseSeatCodes(hallForm.seat_codes);
+        const validationError = seatCodesError(seatCodes);
+        if (validationError) {
+            setFormError(validationError);
+            return;
+        }
+
+        setSubmitting(true);
         const shouldResumeShowtime = resumeShowtimeAfterCatalog;
 
         try {
             await requestJson<CinemaHall>('/cinema-halls', {
                 method: 'POST',
                 body: JSON.stringify({
-                    hall_number: hallForm.hall_number,
-                    seat_codes: hallForm.seat_codes
-                        .split(/[,\s]+/)
-                        .map((seatCode) => seatCode.trim())
-                        .filter(Boolean),
+                    hall_number: hallForm.hall_number.trim(),
+                    seat_codes: seatCodes,
                 }),
             });
             setHallDialogOpen(false);
@@ -397,6 +474,7 @@ export default function Dashboard() {
                 method: 'PUT',
                 body: JSON.stringify({
                     ...editBookingForm,
+                    customer_email: editBookingForm.customer_email.trim(),
                     showtime_id: Number(editBookingForm.showtime_id),
                     seat_id: Number(editBookingForm.seat_id),
                 }),
@@ -413,8 +491,14 @@ export default function Dashboard() {
     async function saveShowtime(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (!editShowtime) return;
-        setSubmitting(true);
         setFormError(null);
+        const showtimeStart = futureDateTimeISO(editShowtimeForm.showtime_start);
+        if (!showtimeStart) {
+            setFormError('Choose a valid future showtime.');
+            return;
+        }
+
+        setSubmitting(true);
 
         try {
             await requestJson<Showtime>(`/showtimes/${editShowtime.id}`, {
@@ -422,7 +506,7 @@ export default function Dashboard() {
                 body: JSON.stringify({
                     movie_id: Number(editShowtimeForm.movie_id),
                     cinema_hall_id: Number(editShowtimeForm.cinema_hall_id),
-                    showtime_start: new Date(editShowtimeForm.showtime_start).toISOString(),
+                    showtime_start: showtimeStart,
                 }),
             });
             setEditShowtime(null);
@@ -437,13 +521,21 @@ export default function Dashboard() {
     async function saveMovie(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (!editMovie) return;
+        if (!isNumericRating(editMovieForm.rating)) {
+            setFormError('Rating must contain numbers only; decimals are allowed.');
+            return;
+        }
+
         setSubmitting(true);
         setFormError(null);
 
         try {
             await requestJson<Movie>(`/movies/${editMovie.id}`, {
                 method: 'PUT',
-                body: JSON.stringify(editMovieForm),
+                body: JSON.stringify({
+                    title: editMovieForm.title.trim(),
+                    rating: editMovieForm.rating.trim(),
+                }),
             });
             setEditMovie(null);
             await refreshDashboard();
@@ -457,18 +549,27 @@ export default function Dashboard() {
     async function saveHall(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (!editHall) return;
-        setSubmitting(true);
         setFormError(null);
+        if (!isNumericHallNumber(editHallForm.hall_number)) {
+            setFormError('Hall number must contain digits only.');
+            return;
+        }
+
+        const seatCodes = parseSeatCodes(editHallForm.seat_codes);
+        const validationError = seatCodesError(seatCodes);
+        if (validationError) {
+            setFormError(validationError);
+            return;
+        }
+
+        setSubmitting(true);
 
         try {
             await requestJson<CinemaHall>(`/cinema-halls/${editHall.id}`, {
                 method: 'PUT',
                 body: JSON.stringify({
-                    hall_number: editHallForm.hall_number,
-                    seat_codes: editHallForm.seat_codes
-                        .split(/[,\s]+/)
-                        .map((seatCode) => seatCode.trim())
-                        .filter(Boolean),
+                    hall_number: editHallForm.hall_number.trim(),
+                    seat_codes: seatCodes,
                 }),
             });
             setEditHall(null);
@@ -485,45 +586,6 @@ export default function Dashboard() {
             <Head title="Cinema dashboard" />
             <div className="bg-muted/20 min-h-full">
                 <main className="mx-auto flex w-full max-w-7xl flex-col gap-7 p-4 sm:p-6 lg:p-8">
-                    <section className="flex flex-col justify-between gap-5 rounded-2xl bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-800 p-6 text-white shadow-sm sm:flex-row sm:items-center sm:p-8">
-                        <div>
-                            <Badge className="mb-4 border-white/15 bg-white/10 text-white hover:bg-white/10" variant="outline">
-                                <Clapperboard className="mr-1.5 size-3.5" />
-                                CINEMA OPERATIONS
-                            </Badge>
-                            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Your multiplex, at a glance.</h1>
-                            <p className="mt-2 max-w-xl text-sm text-zinc-300 sm:text-base">Keep screenings moving and every seat accounted for.</p>
-                        </div>
-                        <div className="flex flex-wrap gap-3">
-                            <Button asChild variant="outline" className="border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white">
-                                <Link href={route('logout')} method="post" as="button">
-                                    <LogOut />
-                                    Log out
-                                </Link>
-                            </Button>
-                            <Button
-                                className="bg-white text-zinc-950 hover:bg-zinc-200"
-                                onClick={() => {
-                                    setFormError(null);
-                                    setShowtimeDialogOpen(true);
-                                }}
-                            >
-                                <Plus />
-                                Add showtime
-                            </Button>
-                            <Button
-                                className="bg-primary text-primary-foreground hover:bg-primary/90"
-                                onClick={() => {
-                                    setFormError(null);
-                                    setBookingDialogOpen(true);
-                                }}
-                            >
-                                <Ticket />
-                                New booking
-                            </Button>
-                        </div>
-                    </section>
-
                     {error && (
                         <Alert variant="destructive">
                             <AlertTitle>Could not load the dashboard</AlertTitle>
@@ -538,34 +600,30 @@ export default function Dashboard() {
 
                     <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                         <MetricCard
+                            label="Total movies"
+                            value={loading ? '—' : String(data?.stats.total_movies ?? 0)}
+                            note="In the movie catalog"
+                            icon={Film}
+                            onClick={() => document.getElementById('catalog')?.scrollIntoView({ behavior: 'smooth' })}
+                        />
+                        <MetricCard
                             label="Total bookings"
-                            value={loading ? '—' : String(data?.bookings.total ?? 0)}
+                            value={loading ? '—' : String(data?.stats.total_bookings ?? 0)}
                             note="Across all screenings"
                             icon={Ticket}
                             onClick={() => document.getElementById('bookings')?.scrollIntoView({ behavior: 'smooth' })}
                         />
                         <MetricCard
-                            label="Upcoming screenings"
-                            value={loading ? '—' : String(data?.showtimes.total ?? 0)}
-                            note="Movies on the calendar"
-                            icon={CalendarDays}
+                            label="Available seats"
+                            value={loading ? '—' : String(data?.stats.available_seats ?? 0)}
+                            note="Across upcoming screenings"
+                            icon={Users}
                             onClick={() => document.getElementById('showtimes')?.scrollIntoView({ behavior: 'smooth' })}
                         />
                         <MetricCard
-                            label="Cinema halls"
-                            value={loading ? '—' : String(data?.showtimeDependencies.cinema_halls.length ?? 0)}
-                            note="Available for scheduling"
-                            icon={Film}
-                            onClick={() => document.getElementById('catalog')?.scrollIntoView({ behavior: 'smooth' })}
-                        />
-                        <MetricCard
-                            label="Booking value"
-                            value={
-                                loading
-                                    ? '—'
-                                    : formatCurrency(data?.bookings.data.reduce((total, booking) => total + Number(booking.total_amount), 0) ?? 0)
-                            }
-                            note="Bookings on this page"
+                            label="Total revenue"
+                            value={loading ? '—' : formatCurrency(data?.stats.total_revenue ?? 0)}
+                            note="From paid bookings"
                             icon={Wallet}
                             onClick={() => document.getElementById('bookings')?.scrollIntoView({ behavior: 'smooth' })}
                         />
@@ -740,7 +798,7 @@ export default function Dashboard() {
                                     </div>
                                     <div className="mt-5 grid grid-cols-2 gap-3">
                                         <div className="bg-background rounded-lg p-3">
-                                            <p className="text-2xl font-semibold">{data?.bookingDependencies.showtimes.length ?? 0}</p>
+                                            <p className="text-2xl font-semibold">{availableBookingShowtimes.length}</p>
                                             <p className="text-muted-foreground text-xs">Shows to book</p>
                                         </div>
                                         <div className="bg-background rounded-lg p-3">
@@ -1021,7 +1079,7 @@ export default function Dashboard() {
                             <DialogTitle>New movie booking</DialogTitle>
                             <DialogDescription>Reserve a seat and calculate the ticket price automatically.</DialogDescription>
                         </DialogHeader>
-                        {!data?.bookingDependencies.showtimes.length && (
+                        {!availableBookingShowtimes.length && (
                             <div className="bg-muted/60 mt-4 grid gap-3 rounded-lg p-4">
                                 <p className="text-sm">You need a scheduled showtime before you can book a seat.</p>
                                 <Button
@@ -1061,7 +1119,7 @@ export default function Dashboard() {
                                         <SelectValue placeholder="Choose a screening" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        {data?.bookingDependencies.showtimes.map((showtime) => (
+                                        {availableBookingShowtimes.map((showtime) => (
                                             <SelectItem key={showtime.id} value={String(showtime.id)}>
                                                 {showtime.movie.title} · Hall {showtime.cinema_hall.hall_number} ·{' '}
                                                 {formatDate(showtime.showtime_start, {
@@ -1235,6 +1293,7 @@ export default function Dashboard() {
                                     id="showtime-start"
                                     type="datetime-local"
                                     required
+                                    min={minimumShowtimeLocal()}
                                     value={showtimeForm.showtime_start}
                                     onChange={(event) => setShowtimeForm({ ...showtimeForm, showtime_start: event.target.value })}
                                 />
@@ -1283,7 +1342,7 @@ export default function Dashboard() {
                                     required
                                     maxLength={255}
                                     value={movieForm.title}
-                                    onChange={(event) => setMovieForm({ ...movieForm, title: event.target.value })}
+                                    onChange={(event) => setMovieForm((current) => ({ ...current, title: event.target.value }))}
                                     placeholder="e.g. The Grand Adventure"
                                 />
                             </div>
@@ -1293,10 +1352,19 @@ export default function Dashboard() {
                                     id="movie-rating"
                                     required
                                     maxLength={10}
+                                    inputMode="decimal"
+                                    pattern="[0-9]+(\\.[0-9]+)?"
                                     value={movieForm.rating}
-                                    onChange={(event) => setMovieForm({ ...movieForm, rating: event.target.value })}
-                                    placeholder="e.g. PG-13"
+                                    onChange={(event) => {
+                                        setFormError(null);
+                                        setMovieForm((current) => ({ ...current, rating: event.target.value }));
+                                    }}
+                                    aria-invalid={Boolean(movieForm.rating) && !isNumericRating(movieForm.rating)}
+                                    placeholder="e.g. 8.5"
                                 />
+                                {movieForm.rating && !isNumericRating(movieForm.rating) && (
+                                    <p className="text-destructive text-sm">Rating must contain numbers only; decimals are allowed.</p>
+                                )}
                             </div>
                             {formError && (
                                 <p role="alert" className="text-destructive text-sm">
@@ -1338,10 +1406,19 @@ export default function Dashboard() {
                                     id="hall-number"
                                     required
                                     maxLength={20}
+                                    inputMode="numeric"
+                                    pattern="[0-9]+"
                                     value={hallForm.hall_number}
-                                    onChange={(event) => setHallForm({ ...hallForm, hall_number: event.target.value })}
-                                    placeholder="e.g. Hall 1"
+                                    aria-invalid={Boolean(hallForm.hall_number) && !isNumericHallNumber(hallForm.hall_number)}
+                                    onChange={(event) => {
+                                        setFormError(null);
+                                        setHallForm((current) => ({ ...current, hall_number: event.target.value }));
+                                    }}
+                                    placeholder="e.g. 1"
                                 />
+                                {hallForm.hall_number && !isNumericHallNumber(hallForm.hall_number) && (
+                                    <p className="text-destructive text-sm">Hall number must contain digits only.</p>
+                                )}
                             </div>
                             <div className="grid gap-2">
                                 <Label htmlFor="seat-codes">Seat codes</Label>
@@ -1387,7 +1464,7 @@ export default function Dashboard() {
                                     required
                                     maxLength={255}
                                     value={editMovieForm.title}
-                                    onChange={(event) => setEditMovieForm({ ...editMovieForm, title: event.target.value })}
+                                    onChange={(event) => setEditMovieForm((current) => ({ ...current, title: event.target.value }))}
                                 />
                             </div>
                             <div className="grid gap-2">
@@ -1396,9 +1473,18 @@ export default function Dashboard() {
                                     id="edit-movie-rating"
                                     required
                                     maxLength={10}
+                                    inputMode="decimal"
+                                    pattern="[0-9]+(\\.[0-9]+)?"
                                     value={editMovieForm.rating}
-                                    onChange={(event) => setEditMovieForm({ ...editMovieForm, rating: event.target.value })}
+                                    onChange={(event) => {
+                                        setFormError(null);
+                                        setEditMovieForm((current) => ({ ...current, rating: event.target.value }));
+                                    }}
+                                    aria-invalid={Boolean(editMovieForm.rating) && !isNumericRating(editMovieForm.rating)}
                                 />
+                                {editMovieForm.rating && !isNumericRating(editMovieForm.rating) && (
+                                    <p className="text-destructive text-sm">Rating must contain numbers only; decimals are allowed.</p>
+                                )}
                             </div>
                             {formError && (
                                 <p role="alert" className="text-destructive text-sm">
@@ -1433,9 +1519,18 @@ export default function Dashboard() {
                                     id="edit-hall-number"
                                     required
                                     maxLength={20}
+                                    inputMode="numeric"
+                                    pattern="[0-9]+"
                                     value={editHallForm.hall_number}
-                                    onChange={(event) => setEditHallForm({ ...editHallForm, hall_number: event.target.value })}
+                                    aria-invalid={Boolean(editHallForm.hall_number) && !isNumericHallNumber(editHallForm.hall_number)}
+                                    onChange={(event) => {
+                                        setFormError(null);
+                                        setEditHallForm((current) => ({ ...current, hall_number: event.target.value }));
+                                    }}
                                 />
+                                {editHallForm.hall_number && !isNumericHallNumber(editHallForm.hall_number) && (
+                                    <p className="text-destructive text-sm">Hall number must contain digits only.</p>
+                                )}
                             </div>
                             <div className="grid gap-2">
                                 <Label htmlFor="edit-seat-codes">Seat codes</Label>
@@ -1517,6 +1612,7 @@ export default function Dashboard() {
                                     id="edit-showtime-start"
                                     type="datetime-local"
                                     required
+                                    min={minimumShowtimeLocal()}
                                     value={editShowtimeForm.showtime_start}
                                     onChange={(event) => setEditShowtimeForm({ ...editShowtimeForm, showtime_start: event.target.value })}
                                 />

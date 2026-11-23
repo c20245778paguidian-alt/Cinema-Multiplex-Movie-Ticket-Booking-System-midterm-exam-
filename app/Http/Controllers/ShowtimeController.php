@@ -52,6 +52,21 @@ class ShowtimeController extends Controller
         );
     }
 
+    public function destroyMovie(string $id): JsonResponse
+    {
+        $movie = Movie::query()->findOrFail($id);
+
+        if ($movie->showtimes()->exists()) {
+            return response()->json([
+                'message' => 'This movie has scheduled showtimes and cannot be deleted.',
+            ], 422);
+        }
+
+        $movie->delete();
+
+        return response()->json(['message' => 'Movie deleted.']);
+    }
+
     public function updateCinemaHall(string $id, UpdateCinemaHallRequest $request, CinemaBookingService $service): JsonResponse
     {
         return response()->json(

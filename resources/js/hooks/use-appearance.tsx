@@ -10,11 +10,11 @@ const applyTheme = (appearance: Appearance) => {
     document.documentElement.classList.toggle('dark', isDark);
 };
 
-const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+let mediaQuery: MediaQueryList | null = null;
 
 const handleSystemThemeChange = () => {
-    const currentAppearance = localStorage.getItem('appearance') as Appearance;
-    applyTheme(currentAppearance || 'system');
+    const currentAppearance = (localStorage.getItem('appearance') as Appearance | null) || 'system';
+    if (currentAppearance === 'system') applyTheme('system');
 };
 
 export function initializeTheme() {
@@ -22,8 +22,10 @@ export function initializeTheme() {
 
     applyTheme(savedAppearance);
 
-    // Add the event listener for system theme changes...
-    mediaQuery.addEventListener('change', handleSystemThemeChange);
+    if (!mediaQuery) {
+        mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+        mediaQuery.addEventListener('change', handleSystemThemeChange);
+    }
 }
 
 export function useAppearance() {
@@ -36,10 +38,9 @@ export function useAppearance() {
     };
 
     useEffect(() => {
-        const savedAppearance = localStorage.getItem('appearance') as Appearance | null;
-        updateAppearance(savedAppearance || 'system');
-
-        return () => mediaQuery.removeEventListener('change', handleSystemThemeChange);
+        const savedAppearance = (localStorage.getItem('appearance') as Appearance | null) || 'system';
+        setAppearance(savedAppearance);
+        applyTheme(savedAppearance);
     }, []);
 
     return { appearance, updateAppearance };

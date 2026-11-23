@@ -16,7 +16,7 @@ class UpdateShowtimeRequest extends FormRequest
         return [
             'movie_id' => ['sometimes', 'required', 'integer', 'exists:movies,id'],
             'cinema_hall_id' => ['sometimes', 'required', 'integer', 'exists:cinema_halls,id'],
-            'showtime_start' => ['sometimes', 'required', 'date'],
+            'showtime_start' => ['sometimes', 'required', 'date', 'after:now'],
         ];
     }
 
@@ -26,6 +26,7 @@ class UpdateShowtimeRequest extends FormRequest
             'movie_id.exists' => 'Select an existing movie.',
             'cinema_hall_id.exists' => 'Select an existing cinema hall.',
             'showtime_start.date' => 'Enter a valid showtime date and time.',
+            'showtime_start.after' => 'Choose a future showtime.',
         ];
     }
 }

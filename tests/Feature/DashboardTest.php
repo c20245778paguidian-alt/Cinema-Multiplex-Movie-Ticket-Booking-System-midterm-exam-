@@ -21,4 +21,13 @@ class DashboardTest extends TestCase
 
         $this->get('/dashboard')->assertOk();
     }
+
+    public function test_authenticated_users_can_open_the_main_cinema_pages()
+    {
+        $this->actingAs(User::factory()->create());
+
+        $this->get('/movies')->assertOk();
+        $this->get('/booking')->assertOk();
+        $this->get('/payment')->assertOk();
+    }
 }

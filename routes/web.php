@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
+use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\MovieBookingController;
 use App\Http\Controllers\ShowtimeController;
 
@@ -13,6 +14,10 @@ Route::middleware(['auth'])->group(function () {
     Route::get('dashboard', function () {
         return Inertia::render('dashboard');
     })->name('dashboard');
+    Route::get('dashboard/stats', [DashboardController::class, 'stats'])->name('dashboard.stats');
+    Route::get('movies', fn () => Inertia::render('movies'))->name('movies.index');
+    Route::get('booking', fn () => Inertia::render('booking'))->name('booking.create');
+    Route::get('payment', fn () => Inertia::render('payment'))->name('payment.create');
 
     Route::get('showtimes/create', [ShowtimeController::class, 'create'])->name('showtimes.create');
     Route::get('showtimes', [ShowtimeController::class, 'index'])->name('showtimes.index');
@@ -21,6 +26,7 @@ Route::middleware(['auth'])->group(function () {
     Route::patch('showtimes/{id}', [ShowtimeController::class, 'update']);
     Route::post('movies', [ShowtimeController::class, 'storeMovie'])->name('movies.store');
     Route::put('movies/{id}', [ShowtimeController::class, 'updateMovie'])->name('movies.update');
+    Route::delete('movies/{id}', [ShowtimeController::class, 'destroyMovie'])->name('movies.destroy');
     Route::post('cinema-halls', [ShowtimeController::class, 'storeCinemaHall'])->name('cinema-halls.store');
     Route::put('cinema-halls/{id}', [ShowtimeController::class, 'updateCinemaHall'])->name('cinema-halls.update');
 

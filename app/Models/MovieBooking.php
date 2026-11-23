@@ -17,6 +17,7 @@ class MovieBooking extends Model
         'showtime_id',
         'seat_id',
         'ticket_type',
+        'payment_method',
         'total_amount',
         'payment_status',
     ];
