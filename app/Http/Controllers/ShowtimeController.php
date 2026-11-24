@@ -20,7 +20,7 @@ class ShowtimeController extends Controller
     {
         return response()->json(
             Showtime::query()
-                ->with(['movie', 'cinemaHall'])
+                ->with(['movie', 'cinemaHall']) // SALA NEED FURTHER OPTIMIZATION
                 ->where('showtime_start', '>=', now())
                 ->orderBy('showtime_start')
                 ->paginate(15)
@@ -30,8 +30,8 @@ class ShowtimeController extends Controller
     public function create(): JsonResponse
     {
         return response()->json([
-            'movies' => Movie::query()->orderBy('title')->get(),
-            'cinema_halls' => CinemaHall::query()->with('seats')->orderBy('hall_number')->get(),
+            'movies' => Movie::query()->orderBy('title')->get(), // SALA NEED FURTHER OPTIMIZATION
+            'cinema_halls' => CinemaHall::query()->with('seats')->orderBy('hall_number')->get(), // SALA NEED FURTHER OPTIMIZATION
         ]);
     }
 
@@ -78,7 +78,7 @@ class ShowtimeController extends Controller
     {
         $showtime = $service->createShowtime($request->validated());
 
-        return response()->json($showtime->load(['movie', 'cinemaHall']), 201);
+        return response()->json($showtime->load(['movie', 'cinemaHall']), 201); // SALA NEED FURTHER OPTIMIZATION
     }
 
     public function update(
@@ -91,6 +91,6 @@ class ShowtimeController extends Controller
             $request->validated(),
         );
 
-        return response()->json($showtime->load(['movie', 'cinemaHall']));
+        return response()->json($showtime->load(['movie', 'cinemaHall'])); // SALA NEED FURTHER OPTIMIZATION
     }
 }

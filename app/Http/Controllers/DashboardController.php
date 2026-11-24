@@ -20,7 +20,7 @@ class DashboardController extends Controller
             ->whereHas('showtime', fn ($query) => $query->where('showtime_start', '>=', $now))
             ->count();
 
-        return response()->json([
+        return response()->json([ // NEED FURTHER OPTIMIZATION
             'total_movies' => Movie::query()->count(),
             'total_bookings' => MovieBooking::query()->count(),
             'available_seats' => max(0, $seatCapacity - $reservedSeats),

@@ -21,6 +21,7 @@ class CinemaBookingService
             $attributes['seat_codes'] = $this->sanitizeSeatCodes($data['seat_codes']);
         }
 
+        //THIS MUST BE DONE N UR FORM REQUEST
         $attributes = Validator::make($attributes, [
             'hall_number' => ['required', 'string', 'max:20', 'regex:/^\d+$/'],
             'seat_codes' => ['sometimes', 'array'],
@@ -45,6 +46,7 @@ class CinemaBookingService
 
     public function createMovie(array $data): Movie
     {
+        //THIS MUST BE DONE N UR FORM REQUEST
         $attributes = $this->validateMovie($data);
 
         return DB::transaction(fn () => Movie::create($attributes));
@@ -52,7 +54,7 @@ class CinemaBookingService
 
     public function updateMovie(Movie $movie, array $data): Movie
     {
-        $attributes = $this->validateMovie($data, true);
+        $attributes = $this->validateMovie($data, true);//THIS MUST BE DONE N UR FORM REQUEST
 
         return DB::transaction(function () use ($movie, $attributes) {
             $movie->update($attributes);
@@ -67,7 +69,7 @@ class CinemaBookingService
         if (array_key_exists('seat_codes', $data)) {
             $attributes['seat_codes'] = $this->sanitizeSeatCodes($data['seat_codes']);
         }
-
+//THIS MUST BE DONE N UR FORM REQUEST
         $attributes = Validator::make($attributes, [
             'hall_number' => ['sometimes', 'required', 'string', 'max:20', 'regex:/^\d+$/'],
             'seat_codes' => ['sometimes', 'array'],
@@ -131,14 +133,14 @@ class CinemaBookingService
 
     public function createShowtime(array $data): Showtime
     {
-        $attributes = $this->validateShowtime($data);
+        $attributes = $this->validateShowtime($data);//THIS MUST BE DONE N UR FORM REQUEST
 
         return DB::transaction(fn () => Showtime::create($attributes));
     }
 
     public function updateShowtime(Showtime $showtime, array $data): Showtime
     {
-        $updates = $this->validateShowtime($data, true);
+        $updates = $this->validateShowtime($data, true);//THIS MUST BE DONE N UR FORM REQUEST
 
         return DB::transaction(function () use ($showtime, $updates) {
             $showtime = Showtime::query()->lockForUpdate()->findOrFail($showtime->id);
@@ -208,7 +210,7 @@ class CinemaBookingService
             return $booking->refresh();
         });
     }
-
+//TRANSFER THIS TO FORM REQUESTS
     private function validateShowtime(array $data, bool $isUpdate = false): array
     {
         $attributes = $this->sanitizeFields($data, [

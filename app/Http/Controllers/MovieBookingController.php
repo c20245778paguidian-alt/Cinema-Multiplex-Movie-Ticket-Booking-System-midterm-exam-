@@ -24,7 +24,7 @@ class MovieBookingController extends Controller
         ])->validate()['search'] ?? '';
 
         $bookings = MovieBooking::query()
-            ->with(['showtime.movie', 'showtime.cinemaHall', 'seat'])
+            ->with(['showtime.movie', 'showtime.cinemaHall', 'seat']) // SALA NEED FURTHER OPTIMIZATION
             ->when($search !== '', function ($query) use ($search) {
                 $query->where(function ($query) use ($search) {
                     $query->where('customer_email', 'like', "%{$search}%")
@@ -48,9 +48,9 @@ class MovieBookingController extends Controller
                 ->with(['movie', 'cinemaHall.seats', 'bookings:booking_id,showtime_id,seat_id'])
                 ->orderBy('showtime_start')
                 ->get(),
-            'ticket_types' => config('cinema.ticket_types'),
-            'payment_methods' => ['card', 'ewallet', 'cash'],
-            'payment_statuses' => config('cinema.payment_statuses'),
+            'ticket_types' => config('cinema.ticket_types'), // CONVERT TO ENUMS
+            'payment_methods' => ['card', 'ewallet', 'cash'], // SAME - ENUMS
+            'payment_statuses' => config('cinema.payment_statuses'), // SAME ENUMS
         ]);
     }
 
@@ -58,7 +58,7 @@ class MovieBookingController extends Controller
     {
         return response()->json(
             MovieBooking::query()
-                ->with(['showtime.movie', 'showtime.cinemaHall', 'seat'])
+                ->with(['showtime.movie', 'showtime.cinemaHall', 'seat']) // SALA NEED FURTHER OPTIMIZATION
                 ->findOrFail($id),
         );
     }
@@ -68,7 +68,7 @@ class MovieBookingController extends Controller
         $booking = $service->createMovieBooking($request->validated());
 
         return response()->json(
-            $booking->load(['showtime.movie', 'showtime.cinemaHall', 'seat']),
+            $booking->load(['showtime.movie', 'showtime.cinemaHall', 'seat']), // SALA NEED FURTHER OPTIMIZATION
             201,
         );
     }
@@ -83,6 +83,6 @@ class MovieBookingController extends Controller
             $request->validated(),
         );
 
-        return response()->json($booking->load(['showtime.movie', 'showtime.cinemaHall', 'seat']));
+        return response()->json($booking->load(['showtime.movie', 'showtime.cinemaHall', 'seat'])); // SALA NEED FURTHER OPTIMIZATION
     }
 }
