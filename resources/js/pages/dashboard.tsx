@@ -192,19 +192,28 @@ function MetricCard({
     value,
     note,
     icon: Icon,
+    tone,
     onClick,
 }: {
     label: string;
     value: string;
     note: string;
     icon: typeof Ticket;
+    tone: 'violet' | 'blue' | 'green' | 'amber';
     onClick: () => void;
 }) {
+    const tones = {
+        violet: 'bg-gradient-to-br from-violet-600 to-purple-700',
+        blue: 'bg-gradient-to-br from-sky-500 to-blue-600',
+        green: 'bg-gradient-to-br from-emerald-500 to-green-600',
+        amber: 'bg-gradient-to-br from-amber-400 to-orange-500',
+    };
+
     return (
         <Card
             role="button"
             tabIndex={0}
-            className="group border-border/70 hover:border-primary/50 hover:bg-muted/30 focus-visible:ring-ring h-full cursor-pointer text-left shadow-none transition-colors focus-visible:ring-2"
+            className={`group ${tones[tone]} h-full cursor-pointer border-0 text-left text-white shadow-sm transition hover:brightness-105 focus-visible:ring-2 focus-visible:ring-white`}
             onClick={onClick}
             onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
@@ -215,11 +224,11 @@ function MetricCard({
         >
             <CardContent className="flex items-start justify-between gap-4 p-5">
                 <div>
-                    <p className="text-muted-foreground text-sm font-medium">{label}</p>
+                    <p className="text-sm font-medium text-white/80">{label}</p>
                     <p className="mt-2 text-3xl font-semibold tracking-tight">{value}</p>
-                    <p className="text-muted-foreground mt-1 text-xs">{note}</p>
+                    <p className="mt-1 text-xs text-white/75">{note}</p>
                 </div>
-                <div className="bg-primary/10 text-primary rounded-xl p-3">
+                <div className="rounded-xl bg-white/15 p-3 text-white">
                     <Icon className="size-5" />
                 </div>
             </CardContent>
@@ -335,6 +344,18 @@ export default function Dashboard() {
             .map((booking) => booking.seat_id),
     );
     const editAvailableSeats = editingBookingShowtime?.cinema_hall.seats?.filter((seat) => !editReservedSeatIds.has(seat.id)) ?? [];
+
+    function openBookingEditor(booking: MovieBooking) {
+        setFormError(null);
+        setEditBooking(booking);
+        setEditBookingForm({
+            customer_email: booking.customer_email,
+            showtime_id: String(booking.showtime.id),
+            seat_id: String(booking.seat.id),
+            ticket_type: booking.ticket_type,
+            payment_status: booking.payment_status,
+        });
+    }
 
     async function submitBooking(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
@@ -598,12 +619,19 @@ export default function Dashboard() {
                         </Alert>
                     )}
 
+                    <header>
+                        <p className="text-muted-foreground text-sm font-medium">Cinema operations</p>
+                        <h1 className="mt-1 text-3xl font-semibold tracking-tight">Dashboard</h1>
+                        <p className="text-muted-foreground mt-2">A quick overview of your cinema's activity and system information.</p>
+                    </header>
+
                     <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                         <MetricCard
                             label="Total movies"
                             value={loading ? '—' : String(data?.stats.total_movies ?? 0)}
                             note="In the movie catalog"
                             icon={Film}
+                            tone="violet"
                             onClick={() => document.getElementById('catalog')?.scrollIntoView({ behavior: 'smooth' })}
                         />
                         <MetricCard
@@ -611,6 +639,7 @@ export default function Dashboard() {
                             value={loading ? '—' : String(data?.stats.total_bookings ?? 0)}
                             note="Across all screenings"
                             icon={Ticket}
+                            tone="blue"
                             onClick={() => document.getElementById('bookings')?.scrollIntoView({ behavior: 'smooth' })}
                         />
                         <MetricCard
@@ -618,6 +647,7 @@ export default function Dashboard() {
                             value={loading ? '—' : String(data?.stats.available_seats ?? 0)}
                             note="Across upcoming screenings"
                             icon={Users}
+                            tone="green"
                             onClick={() => document.getElementById('showtimes')?.scrollIntoView({ behavior: 'smooth' })}
                         />
                         <MetricCard
@@ -625,11 +655,96 @@ export default function Dashboard() {
                             value={loading ? '—' : formatCurrency(data?.stats.total_revenue ?? 0)}
                             note="From paid bookings"
                             icon={Wallet}
+                            tone="amber"
                             onClick={() => document.getElementById('bookings')?.scrollIntoView({ behavior: 'smooth' })}
                         />
                     </section>
 
-                    <section id="showtimes" className="grid scroll-mt-6 gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+                    <section className="grid gap-6 xl:grid-cols-[1.65fr_1fr]">
+                        <Card>
+                            <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+                                <div>
+                                    <CardTitle className="text-lg">Recent bookings</CardTitle>
+                                    <CardDescription className="mt-1">Latest customer reservations and payment status.</CardDescription>
+                                </div>
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => document.getElementById('bookings')?.scrollIntoView({ behavior: 'smooth' })}
+                                >
+                                    View all
+                                </Button>
+                            </CardHeader>
+                            <CardContent>
+                                {loading && !data ? (
+                                    <div className="text-muted-foreground py-8 text-center text-sm">Loading recent bookings…</div>
+                                ) : data?.bookings.data.length ? (
+                                    <div className="divide-y">
+                                        {data.bookings.data.slice(0, 3).map((booking, index) => (
+                                            <button
+                                                key={booking.booking_id}
+                                                type="button"
+                                                className="hover:bg-muted/40 grid w-full grid-cols-[28px_minmax(0,1.2fr)_minmax(0,1fr)_auto] items-center gap-3 rounded-md px-2 py-3 text-left transition-colors"
+                                                onClick={() => openBookingEditor(booking)}
+                                                aria-label={`Edit booking ${booking.booking_id} for ${booking.customer_email}`}
+                                            >
+                                                <span className="text-muted-foreground text-xs">{index + 1}</span>
+                                                <span className="min-w-0">
+                                                    <span className="block truncate text-sm font-medium">{booking.customer_email}</span>
+                                                    <span className="text-muted-foreground mt-0.5 block truncate text-xs">
+                                                        {booking.showtime.movie.title}
+                                                    </span>
+                                                </span>
+                                                <span className="text-muted-foreground truncate text-xs">
+                                                    {formatDate(booking.showtime.showtime_start, { hour: 'numeric', minute: '2-digit' })}
+                                                </span>
+                                                <Badge variant={statusVariant(booking.payment_status)} className="capitalize">
+                                                    {booking.payment_status}
+                                                </Badge>
+                                            </button>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <p className="text-muted-foreground py-8 text-center text-sm">New customer reservations will appear here.</p>
+                                )}
+                            </CardContent>
+                        </Card>
+
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="text-lg">Quick actions</CardTitle>
+                                <CardDescription>Common tasks for your cinema.</CardDescription>
+                            </CardHeader>
+                            <CardContent className="grid gap-2">
+                                <Button className="w-full justify-start" onClick={() => setBookingDialogOpen(true)}>
+                                    <Ticket />
+                                    Create a booking
+                                </Button>
+                                <Button className="w-full justify-start" variant="outline" onClick={() => setMovieDialogOpen(true)}>
+                                    <Film />
+                                    Add movie
+                                </Button>
+                                <Button
+                                    className="w-full justify-start"
+                                    variant="outline"
+                                    onClick={() => document.getElementById('showtimes')?.scrollIntoView({ behavior: 'smooth' })}
+                                >
+                                    <CalendarDays />
+                                    Manage showtimes
+                                </Button>
+                                <Button
+                                    className="w-full justify-start"
+                                    variant="outline"
+                                    onClick={() => document.getElementById('bookings')?.scrollIntoView({ behavior: 'smooth' })}
+                                >
+                                    <Search />
+                                    View bookings
+                                </Button>
+                            </CardContent>
+                        </Card>
+                    </section>
+
+                    <section id="showtimes" className="scroll-mt-6">
                         <Card className="border-border/70 shadow-none">
                             <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
                                 <div>
@@ -779,56 +894,6 @@ export default function Dashboard() {
                                 )}
                             </CardContent>
                         </Card>
-
-                        <Card className="border-border/70 shadow-none">
-                            <CardHeader>
-                                <CardTitle className="text-lg">Quick booking</CardTitle>
-                                <CardDescription>Reserve a seat for a customer in just a few steps.</CardDescription>
-                            </CardHeader>
-                            <CardContent className="flex h-[calc(100%-5rem)] flex-col items-start justify-between gap-6">
-                                <div className="bg-muted/60 w-full rounded-xl p-5">
-                                    <div className="flex items-center gap-3">
-                                        <div className="bg-background text-primary rounded-lg p-2.5 shadow-sm">
-                                            <Users className="size-5" />
-                                        </div>
-                                        <div>
-                                            <p className="font-medium">Ready for your next guest?</p>
-                                            <p className="text-muted-foreground text-sm">Choose a show, seat, and ticket type.</p>
-                                        </div>
-                                    </div>
-                                    <div className="mt-5 grid grid-cols-2 gap-3">
-                                        <div className="bg-background rounded-lg p-3">
-                                            <p className="text-2xl font-semibold">{availableBookingShowtimes.length}</p>
-                                            <p className="text-muted-foreground text-xs">Shows to book</p>
-                                        </div>
-                                        <div className="bg-background rounded-lg p-3">
-                                            <p className="text-2xl font-semibold">
-                                                {Object.keys(data?.bookingDependencies.ticket_types ?? {}).length}
-                                            </p>
-                                            <p className="text-muted-foreground text-xs">Ticket options</p>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="grid w-full gap-2 sm:grid-cols-2">
-                                    <Button className="w-full" onClick={() => setBookingDialogOpen(true)}>
-                                        <Ticket />
-                                        Create a booking
-                                    </Button>
-                                    <Button variant="outline" onClick={() => setMovieDialogOpen(true)}>
-                                        <Plus />
-                                        Add movie
-                                    </Button>
-                                    <Button variant="outline" onClick={() => setHallDialogOpen(true)}>
-                                        <Plus />
-                                        Add hall & seats
-                                    </Button>
-                                    <Button variant="outline" onClick={() => setShowtimeDialogOpen(true)}>
-                                        <Plus />
-                                        Add showtime
-                                    </Button>
-                                </div>
-                            </CardContent>
-                        </Card>
                     </section>
 
                     <section id="catalog" className="grid scroll-mt-6 gap-6 xl:grid-cols-2">
@@ -918,9 +983,9 @@ export default function Dashboard() {
                         <Card className="border-border/70 shadow-none">
                             <CardHeader className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
                                 <div>
-                                    <CardTitle className="text-lg">Recent bookings</CardTitle>
+                                    <CardTitle className="text-lg">Booking management</CardTitle>
                                     <CardDescription className="mt-1">
-                                        Select a booking to edit its customer, seat, ticket, or payment status.
+                                        Search reservations and update customer, seat, ticket, or payment details.
                                     </CardDescription>
                                 </div>
                                 <div className="relative w-full sm:max-w-xs">
@@ -964,29 +1029,11 @@ export default function Dashboard() {
                                                         tabIndex={0}
                                                         role="button"
                                                         aria-label={`Edit booking for ${booking.customer_email}`}
-                                                        onClick={() => {
-                                                            setFormError(null);
-                                                            setEditBooking(booking);
-                                                            setEditBookingForm({
-                                                                customer_email: booking.customer_email,
-                                                                showtime_id: String(booking.showtime.id),
-                                                                seat_id: String(booking.seat.id),
-                                                                ticket_type: booking.ticket_type,
-                                                                payment_status: booking.payment_status,
-                                                            });
-                                                        }}
+                                                        onClick={() => openBookingEditor(booking)}
                                                         onKeyDown={(event) => {
                                                             if (event.key === 'Enter' || event.key === ' ') {
                                                                 event.preventDefault();
-                                                                setFormError(null);
-                                                                setEditBooking(booking);
-                                                                setEditBookingForm({
-                                                                    customer_email: booking.customer_email,
-                                                                    showtime_id: String(booking.showtime.id),
-                                                                    seat_id: String(booking.seat.id),
-                                                                    ticket_type: booking.ticket_type,
-                                                                    payment_status: booking.payment_status,
-                                                                });
+                                                                openBookingEditor(booking);
                                                             }
                                                         }}
                                                     >

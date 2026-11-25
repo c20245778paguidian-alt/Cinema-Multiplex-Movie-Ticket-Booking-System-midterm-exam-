@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import AppLayout from '@/layouts/app-layout';
 import { requestJson } from '@/lib/cinema-api';
 import { type BreadcrumbItem } from '@/types';
-import { Head, Link } from '@inertiajs/react';
+import { Head } from '@inertiajs/react';
 import { Clapperboard, LoaderCircle, Pencil, Plus, Trash2 } from 'lucide-react';
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 
@@ -17,21 +17,19 @@ type Movie = {
     rating: string;
 };
 
-type Showtime = {
-    id: number;
-    showtime_start: string;
-    movie: Movie;
-};
-
 type ShowtimeDependencies = {
     movies: Movie[];
 };
 
-type Paginated<T> = {
-    data: T[];
-};
-
 const breadcrumbs: BreadcrumbItem[] = [{ title: 'Movies', href: '/movies' }];
+const MOVIES_PER_PAGE = 5;
+const posterTones = [
+    'from-violet-950 via-purple-800 to-fuchsia-500',
+    'from-slate-950 via-slate-700 to-orange-500',
+    'from-blue-950 via-indigo-700 to-cyan-400',
+    'from-rose-950 via-red-800 to-amber-400',
+    'from-emerald-950 via-teal-700 to-lime-400',
+];
 
 function isNumericRating(value: string): boolean {
     return /^\d+(?:\.\d+)?$/.test(value.trim());
@@ -39,7 +37,7 @@ function isNumericRating(value: string): boolean {
 
 export default function Movies() {
     const [movies, setMovies] = useState<Movie[]>([]);
-    const [showtimes, setShowtimes] = useState<Showtime[]>([]);
+    const [currentPage, setCurrentPage] = useState(1);
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -54,12 +52,9 @@ export default function Movies() {
         setError(null);
 
         try {
-            const [catalog, schedule] = await Promise.all([
-                requestJson<ShowtimeDependencies>('/showtimes/create'),
-                requestJson<Paginated<Showtime>>('/showtimes'),
-            ]);
+            const catalog = await requestJson<ShowtimeDependencies>('/showtimes/create');
             setMovies(catalog.movies);
-            setShowtimes(schedule.data);
+            setCurrentPage((page) => Math.min(page, Math.max(1, Math.ceil(catalog.movies.length / MOVIES_PER_PAGE))));
         } catch (reason) {
             setError(reason instanceof Error ? reason.message : 'Unable to load movies.');
         } finally {
@@ -70,6 +65,12 @@ export default function Movies() {
     useEffect(() => {
         void loadMovies();
     }, [loadMovies]);
+
+    const pageCount = Math.max(1, Math.ceil(movies.length / MOVIES_PER_PAGE));
+    const firstMovieIndex = (currentPage - 1) * MOVIES_PER_PAGE;
+    const visibleMovies = movies.slice(firstMovieIndex, firstMovieIndex + MOVIES_PER_PAGE);
+    const firstPageNumber = Math.max(1, Math.min(currentPage - 2, pageCount - 4));
+    const pageNumbers = Array.from({ length: Math.min(pageCount, 5) }, (_, index) => firstPageNumber + index);
 
     function openCreateForm() {
         setEditingMovie(null);
@@ -96,6 +97,7 @@ export default function Movies() {
 
         setSubmitting(true);
         setFormError(null);
+        const creatingMovie = !editingMovie;
 
         try {
             const url = editingMovie ? `/movies/${editingMovie.id}` : '/movies';
@@ -104,6 +106,7 @@ export default function Movies() {
                 body: JSON.stringify({ title, rating }),
             });
             setFormOpen(false);
+            if (creatingMovie) setCurrentPage(1);
             await loadMovies();
         } catch (reason) {
             setFormError(reason instanceof Error ? reason.message : 'Unable to save this movie.');
@@ -132,13 +135,13 @@ export default function Movies() {
                     <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                         <div>
                             <p className="text-muted-foreground text-sm font-medium">Cinema catalog</p>
-                            <h1 className="mt-1 text-3xl font-semibold tracking-tight">Movies</h1>
-                            <p className="text-muted-foreground mt-2">Manage titles and ratings available for screenings.</p>
+                            <h1 className="mt-1 text-3xl font-semibold tracking-tight">Movies Management</h1>
+                            <p className="text-muted-foreground mt-2">Add, edit, and remove movies shown in the booking system.</p>
                         </div>
                         {!formOpen && (
                             <Button onClick={openCreateForm}>
                                 <Plus />
-                                Add movie
+                                Add Movie
                             </Button>
                         )}
                     </header>
@@ -229,39 +232,108 @@ export default function Movies() {
                                     Loading movies…
                                 </div>
                             ) : movies.length ? (
-                                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                                    {movies.map((movie) => {
-                                        const movieShowtimes = showtimes.filter((showtime) => showtime.movie.id === movie.id).length;
-
-                                        return (
-                                            <article key={movie.id} className="bg-card rounded-xl border p-5">
-                                                <div className="flex items-start justify-between gap-3">
-                                                    <div className="bg-primary/10 text-primary flex size-11 shrink-0 items-center justify-center rounded-xl">
-                                                        <Clapperboard className="size-5" />
-                                                    </div>
-                                                    <Badge variant="outline">{movie.rating}</Badge>
-                                                </div>
-                                                <h2 className="mt-4 text-lg font-semibold">{movie.title}</h2>
-                                                <p className="text-muted-foreground mt-1 text-sm">
-                                                    {movieShowtimes} upcoming {movieShowtimes === 1 ? 'screening' : 'screenings'}
-                                                </p>
-                                                <div className="mt-5 flex flex-wrap gap-2">
-                                                    <Button size="sm" variant="outline" onClick={() => openEditForm(movie)}>
-                                                        <Pencil />
-                                                        Edit
+                                <>
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full min-w-[640px] text-left text-sm">
+                                            <thead>
+                                                <tr className="text-muted-foreground border-b text-xs font-medium tracking-wide uppercase">
+                                                    <th scope="col" className="w-14 px-3 py-3">
+                                                        #
+                                                    </th>
+                                                    <th scope="col" className="w-20 px-3 py-3">
+                                                        Poster
+                                                    </th>
+                                                    <th scope="col" className="px-3 py-3">
+                                                        Title
+                                                    </th>
+                                                    <th scope="col" className="w-28 px-3 py-3">
+                                                        Rating
+                                                    </th>
+                                                    <th scope="col" className="w-44 px-3 py-3 text-right">
+                                                        Actions
+                                                    </th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y">
+                                                {visibleMovies.map((movie, index) => (
+                                                    <tr key={movie.id} className="hover:bg-muted/30 transition-colors">
+                                                        <td className="text-muted-foreground px-3 py-3.5">{firstMovieIndex + index + 1}</td>
+                                                        <td className="px-3 py-3">
+                                                            <div
+                                                                className={`flex h-14 w-10 items-center justify-center overflow-hidden rounded-md bg-gradient-to-br ${
+                                                                    posterTones[(firstMovieIndex + index) % posterTones.length]
+                                                                } shadow-sm`}
+                                                                aria-hidden="true"
+                                                            >
+                                                                <Clapperboard className="size-5 text-white/90" />
+                                                            </div>
+                                                        </td>
+                                                        <th scope="row" className="px-3 py-3.5 text-left font-medium">
+                                                            {movie.title}
+                                                        </th>
+                                                        <td className="px-3 py-3.5">
+                                                            <Badge variant="outline">{movie.rating}</Badge>
+                                                        </td>
+                                                        <td className="px-3 py-3.5">
+                                                            <div className="flex justify-end gap-2">
+                                                                <Button
+                                                                    size="sm"
+                                                                    className="bg-blue-600 text-white hover:bg-blue-700"
+                                                                    onClick={() => openEditForm(movie)}
+                                                                >
+                                                                    <Pencil />
+                                                                    Edit
+                                                                </Button>
+                                                                <Button size="sm" variant="destructive" onClick={() => void deleteMovie(movie)}>
+                                                                    <Trash2 />
+                                                                    Delete
+                                                                </Button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    {pageCount > 1 && (
+                                        <div className="text-muted-foreground mt-4 flex flex-col gap-3 border-t pt-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+                                            <span>
+                                                Showing {firstMovieIndex + 1}–{Math.min(firstMovieIndex + visibleMovies.length, movies.length)} of{' '}
+                                                {movies.length} movies
+                                            </span>
+                                            <nav className="flex items-center justify-center gap-2" aria-label="Movie pages">
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    disabled={currentPage === 1}
+                                                    onClick={() => setCurrentPage((page) => page - 1)}
+                                                >
+                                                    Previous
+                                                </Button>
+                                                {pageNumbers.map((page) => (
+                                                    <Button
+                                                        key={page}
+                                                        size="sm"
+                                                        variant={page === currentPage ? 'default' : 'outline'}
+                                                        aria-current={page === currentPage ? 'page' : undefined}
+                                                        aria-label={`Page ${page}`}
+                                                        onClick={() => setCurrentPage(page)}
+                                                    >
+                                                        {page}
                                                     </Button>
-                                                    <Button size="sm" variant="outline" onClick={() => void deleteMovie(movie)}>
-                                                        <Trash2 />
-                                                        Delete
-                                                    </Button>
-                                                    <Button size="sm" variant="ghost" asChild>
-                                                        <Link href="/booking">Book a seat</Link>
-                                                    </Button>
-                                                </div>
-                                            </article>
-                                        );
-                                    })}
-                                </div>
+                                                ))}
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    disabled={currentPage === pageCount}
+                                                    onClick={() => setCurrentPage((page) => page + 1)}
+                                                >
+                                                    Next
+                                                </Button>
+                                            </nav>
+                                        </div>
+                                    )}
+                                </>
                             ) : (
                                 <div className="flex flex-col items-center rounded-xl border border-dashed py-12 text-center">
                                     <Clapperboard className="text-muted-foreground size-8" />

@@ -6,10 +6,11 @@ import AppLayout from '@/layouts/app-layout';
 import { formatCurrency, requestJson } from '@/lib/cinema-api';
 import { type BreadcrumbItem } from '@/types';
 import { Head, Link } from '@inertiajs/react';
-import { Armchair, CalendarDays, CheckCircle2, Clock3, CreditCard, LoaderCircle, Wallet } from 'lucide-react';
+import { Armchair, CalendarDays, CheckCircle2, CreditCard, LoaderCircle, Ticket, Wallet } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 type PaymentMethod = 'card' | 'ewallet' | 'cash';
+type DraftIssue = 'missing' | 'invalid' | 'unreadable';
 
 type CheckoutDraft = {
     customerEmail: string;
@@ -38,6 +39,21 @@ const paymentMethods: { value: PaymentMethod; label: string; detail: string; ico
     { value: 'ewallet', label: 'E-wallet', detail: 'Digital wallet preference', icon: Wallet },
     { value: 'cash', label: 'Pay at the counter', detail: 'Settle when you arrive', icon: Armchair },
 ];
+
+const draftIssueCopy: Record<DraftIssue, { title: string; message: string }> = {
+    missing: {
+        title: 'No booking to pay for',
+        message: 'Choose a movie and seat first, then return here to review your booking and payment method.',
+    },
+    invalid: {
+        title: 'Booking details unavailable',
+        message: 'The saved booking details are invalid. Start a new booking to continue.',
+    },
+    unreadable: {
+        title: 'Booking details unavailable',
+        message: 'The saved booking details could not be read. Start a new booking to continue.',
+    },
+};
 
 function isCheckoutDraft(value: unknown): value is CheckoutDraft {
     if (!value || typeof value !== 'object') return false;
@@ -71,7 +87,7 @@ function formatShowtime(value: string): string {
 
 export default function Payment() {
     const [draft, setDraft] = useState<CheckoutDraft | null>(null);
-    const [draftError, setDraftError] = useState<string | null>(null);
+    const [draftError, setDraftError] = useState<DraftIssue | null>(null);
     const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -80,20 +96,20 @@ export default function Payment() {
     useEffect(() => {
         const rawDraft = sessionStorage.getItem('cinema-checkout');
         if (!rawDraft) {
-            setDraftError('Your booking details are missing. Choose a movie and seat to start again.');
+            setDraftError('missing');
             return;
         }
 
         try {
             const parsed: unknown = JSON.parse(rawDraft);
             if (!isCheckoutDraft(parsed)) {
-                setDraftError('Your booking details are invalid. Please start your booking again.');
+                setDraftError('invalid');
                 return;
             }
 
             setDraft(parsed);
         } catch {
-            setDraftError('Your booking details could not be read. Please start your booking again.');
+            setDraftError('unreadable');
         }
     }, []);
 
@@ -128,9 +144,9 @@ export default function Payment() {
             <main className="bg-muted/20 min-h-full">
                 <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-4 sm:p-6 lg:p-8">
                     <header>
-                        <p className="text-muted-foreground text-sm font-medium">Almost there</p>
-                        <h1 className="mt-1 text-3xl font-semibold tracking-tight">Review and confirm</h1>
-                        <p className="text-muted-foreground mt-2">Check your booking summary and select a payment preference.</p>
+                        <p className="text-muted-foreground text-sm font-medium">Booking checkout</p>
+                        <h1 className="mt-1 text-3xl font-semibold tracking-tight">Payment</h1>
+                        <p className="text-muted-foreground mt-2">Review your booking details and choose how you plan to pay.</p>
                     </header>
 
                     {booking ? (
@@ -153,15 +169,18 @@ export default function Payment() {
                             </CardContent>
                         </Card>
                     ) : draftError ? (
-                        <Alert variant="destructive">
-                            <AlertTitle>Checkout is unavailable</AlertTitle>
-                            <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                                <span>{draftError}</span>
-                                <Button size="sm" variant="outline" asChild>
-                                    <Link href="/booking">Back to booking</Link>
+                        <Card>
+                            <CardContent className="flex flex-col items-center py-14 text-center">
+                                <div className="bg-primary/10 text-primary rounded-full p-4">
+                                    <Ticket className="size-8" />
+                                </div>
+                                <h2 className="mt-5 text-xl font-semibold">{draftIssueCopy[draftError].title}</h2>
+                                <p className="text-muted-foreground mt-2 max-w-md text-sm">{draftIssueCopy[draftError].message}</p>
+                                <Button className="mt-6" asChild>
+                                    <Link href="/booking">Start a booking</Link>
                                 </Button>
-                            </AlertDescription>
-                        </Alert>
+                            </CardContent>
+                        </Card>
                     ) : draft ? (
                         <>
                             <Alert>
@@ -179,7 +198,57 @@ export default function Payment() {
                                 </Alert>
                             )}
 
-                            <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+                            <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                                <Card className="lg:sticky lg:top-6">
+                                    <CardHeader>
+                                        <CardTitle>Booking summary</CardTitle>
+                                        <CardDescription>Review before reserving your seat.</CardDescription>
+                                    </CardHeader>
+                                    <CardContent className="flex flex-col gap-5">
+                                        <div className="flex items-start gap-4">
+                                            <div
+                                                className="flex size-24 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-violet-950 via-purple-800 to-fuchsia-500 shadow-sm"
+                                                aria-hidden="true"
+                                            >
+                                                <Ticket className="size-8 text-white/90" />
+                                            </div>
+                                            <div className="min-w-0">
+                                                <h2 className="font-semibold">{draft.movieTitle}</h2>
+                                                <Badge variant="outline" className="mt-2">
+                                                    ★ {draft.movieRating} / 10
+                                                </Badge>
+                                                <p className="text-muted-foreground mt-2 text-sm">Hall {draft.hallNumber}</p>
+                                            </div>
+                                        </div>
+                                        <div className="text-muted-foreground flex flex-col gap-3 border-t pt-4 text-sm">
+                                            <p className="flex items-start gap-2">
+                                                <CalendarDays className="mt-0.5 size-4 shrink-0" />
+                                                <span>{formatShowtime(draft.showtimeStart)}</span>
+                                            </p>
+                                            <p className="flex items-center gap-2">
+                                                <Armchair className="size-4 shrink-0" />
+                                                Seat {draft.seatCode} · {draft.ticketType}
+                                            </p>
+                                            <p className="break-all">{draft.customerEmail}</p>
+                                        </div>
+                                        <div className="space-y-3 border-t pt-4 text-sm">
+                                            <div className="flex justify-between gap-3">
+                                                <span className="text-muted-foreground">Ticket price</span>
+                                                <span>{formatCurrency(draft.ticketPrice)}</span>
+                                            </div>
+                                            <div className="flex justify-between gap-3">
+                                                <span className="text-muted-foreground">Service fee</span>
+                                                <span>{formatCurrency(draft.serviceFee)}</span>
+                                            </div>
+                                            <div className="flex justify-between border-t pt-3 text-base font-semibold">
+                                                <span>Total amount</span>
+                                                <span>{formatCurrency(draft.ticketPrice + draft.serviceFee)}</span>
+                                            </div>
+                                            <p className="text-muted-foreground text-xs">No service fee is currently applied.</p>
+                                        </div>
+                                    </CardContent>
+                                </Card>
+
                                 <Card>
                                     <CardHeader>
                                         <CardTitle>Payment method</CardTitle>
@@ -192,20 +261,20 @@ export default function Payment() {
                                                 type="button"
                                                 aria-pressed={paymentMethod === value}
                                                 onClick={() => setPaymentMethod(value)}
-                                                className={`flex items-center gap-4 rounded-xl border p-4 text-left transition-colors ${
+                                                className={`grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-xl border p-4 text-left transition-colors ${
                                                     paymentMethod === value ? 'border-primary bg-primary/5 ring-primary ring-1' : 'hover:bg-muted/40'
                                                 }`}
                                             >
-                                                <span className="bg-muted rounded-lg p-2.5">
-                                                    <Icon className="size-5" />
-                                                </span>
-                                                <span className="flex-1">
-                                                    <span className="block font-medium">{label}</span>
-                                                    <span className="text-muted-foreground mt-1 block text-sm">{detail}</span>
-                                                </span>
                                                 <span
                                                     className={`size-4 rounded-full border ${paymentMethod === value ? 'border-primary border-[5px]' : 'border-muted-foreground'}`}
                                                 />
+                                                <span>
+                                                    <span className="block font-medium">{label}</span>
+                                                    <span className="text-muted-foreground mt-1 block text-sm">{detail}</span>
+                                                </span>
+                                                <span className="bg-muted text-primary rounded-lg p-2.5">
+                                                    <Icon className="size-5" />
+                                                </span>
                                             </button>
                                         ))}
                                         <div className="mt-3 flex flex-col-reverse justify-between gap-3 sm:flex-row">
@@ -216,51 +285,6 @@ export default function Payment() {
                                                 {submitting && <LoaderCircle className="animate-spin" />}
                                                 Confirm booking
                                             </Button>
-                                        </div>
-                                    </CardContent>
-                                </Card>
-
-                                <Card className="lg:sticky lg:top-6">
-                                    <CardHeader>
-                                        <CardTitle>Booking summary</CardTitle>
-                                        <CardDescription>Review before reserving your seat.</CardDescription>
-                                    </CardHeader>
-                                    <CardContent className="flex flex-col gap-5">
-                                        <div>
-                                            <h2 className="text-lg font-semibold">{draft.movieTitle}</h2>
-                                            <Badge variant="outline" className="mt-2">
-                                                {draft.movieRating}
-                                            </Badge>
-                                        </div>
-                                        <div className="text-muted-foreground flex flex-col gap-3 text-sm">
-                                            <p className="flex items-start gap-2">
-                                                <CalendarDays className="mt-0.5 size-4 shrink-0" />
-                                                {formatShowtime(draft.showtimeStart)}
-                                            </p>
-                                            <p className="flex items-center gap-2">
-                                                <Clock3 className="size-4 shrink-0" />
-                                                Hall {draft.hallNumber}
-                                            </p>
-                                            <p className="flex items-center gap-2">
-                                                <Armchair className="size-4 shrink-0" />
-                                                Seat {draft.seatCode} · {draft.ticketType}
-                                            </p>
-                                            <p className="break-all">{draft.customerEmail}</p>
-                                        </div>
-                                        <div className="space-y-3 border-t pt-4 text-sm">
-                                            <div className="flex justify-between gap-3">
-                                                <span className="text-muted-foreground">Ticket</span>
-                                                <span>{formatCurrency(draft.ticketPrice)}</span>
-                                            </div>
-                                            <div className="flex justify-between gap-3">
-                                                <span className="text-muted-foreground">Service fee</span>
-                                                <span>{formatCurrency(draft.serviceFee)}</span>
-                                            </div>
-                                            <div className="flex justify-between border-t pt-3 text-base font-semibold">
-                                                <span>Total</span>
-                                                <span>{formatCurrency(draft.ticketPrice + draft.serviceFee)}</span>
-                                            </div>
-                                            <p className="text-muted-foreground text-xs">No service fee is currently applied.</p>
                                         </div>
                                     </CardContent>
                                 </Card>

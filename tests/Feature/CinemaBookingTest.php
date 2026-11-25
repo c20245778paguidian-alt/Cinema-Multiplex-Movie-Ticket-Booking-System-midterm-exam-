@@ -8,7 +8,9 @@ use App\Models\MovieBooking;
 use App\Models\Seat;
 use App\Models\Showtime;
 use App\Models\User;
-use App\Services\CinemaBookingService;
+use App\Services\CinemaHallService;
+use App\Services\MovieBookingService;
+use App\Services\ShowtimeService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
@@ -47,7 +49,7 @@ class CinemaBookingTest extends TestCase
     {
         $this->actingAs(User::factory()->create());
         [$showtime, $seat] = $this->makeShowtimeAndSeat();
-        $booking = app(\App\Services\CinemaBookingService::class)->createMovieBooking([
+        $booking = app(MovieBookingService::class)->createMovieBooking([
             'customer_email' => 'before@example.com',
             'showtime_id' => $showtime->id,
             'seat_id' => $seat->id,
@@ -61,6 +63,11 @@ class CinemaBookingTest extends TestCase
             ->assertOk()
             ->assertJsonPath('customer_email', 'new@example.com')
             ->assertJsonPath('total_amount', '200.00');
+
+        $this->getJson("/movie-bookings/{$booking->booking_id}")
+            ->assertOk()
+            ->assertJsonPath('booking_id', $booking->booking_id)
+            ->assertJsonPath('showtime.movie.title', 'Test Movie');
 
         $this->getJson('/showtimes')
             ->assertOk()
@@ -158,7 +165,7 @@ class CinemaBookingTest extends TestCase
             'seat_codes' => ['A1'],
         ])->assertUnprocessable()->assertJsonValidationErrors('hall_number');
 
-        $hall = app(CinemaBookingService::class)->createCinemaHall([
+        $hall = app(CinemaHallService::class)->create([
             'hall_number' => '1',
             'seat_codes' => ['A1'],
         ]);
@@ -204,27 +211,22 @@ class CinemaBookingTest extends TestCase
         $this->assertDatabaseHas('movies', ['id' => $movie->id, 'rating' => '7.5']);
     }
 
-    public function test_booking_service_sanitizes_and_validates_direct_inputs(): void
+    public function test_movie_request_sanitizes_and_validates_input(): void
     {
-        $service = app(CinemaBookingService::class);
-        $movie = $service->createMovie([
+        $this->actingAs(User::factory()->create());
+
+        $this->postJson('/movies', [
             'title' => '  <b>Clean Title</b> ',
             'rating' => ' 8.5 ',
             'unrecognized' => 'ignored',
-        ]);
+        ])->assertCreated()
+            ->assertJsonPath('title', 'Clean Title')
+            ->assertJsonPath('rating', '8.5');
 
-        $this->assertSame('Clean Title', $movie->title);
-        $this->assertSame('8.5', $movie->rating);
-
-        try {
-            $service->createMovie([
-                'title' => ['not', 'a', 'string'],
-                'rating' => '8',
-            ]);
-            $this->fail('Invalid direct service input should fail validation.');
-        } catch (ValidationException $exception) {
-            $this->assertArrayHasKey('title', $exception->errors());
-        }
+        $this->postJson('/movies', [
+            'title' => ['not', 'a', 'string'],
+            'rating' => '8',
+        ])->assertUnprocessable()->assertJsonValidationErrors('title');
     }
 
     public function test_booking_service_rejects_direct_payment_status_override(): void
@@ -232,7 +234,7 @@ class CinemaBookingTest extends TestCase
         [$showtime, $seat] = $this->makeShowtimeAndSeat();
 
         try {
-            app(CinemaBookingService::class)->createMovieBooking([
+            app(MovieBookingService::class)->createMovieBooking([
                 'customer_email' => 'customer@example.com',
                 'showtime_id' => $showtime->id,
                 'seat_id' => $seat->id,
@@ -252,7 +254,7 @@ class CinemaBookingTest extends TestCase
         $this->actingAs(User::factory()->create());
         [$showtime, $seat] = $this->makeShowtimeAndSeat();
         $showtime->cinemaHall->seats()->create(['seat_code' => 'A2']);
-        $booking = app(CinemaBookingService::class)->createMovieBooking([
+        $booking = app(MovieBookingService::class)->createMovieBooking([
             'customer_email' => 'customer@example.com',
             'showtime_id' => $showtime->id,
             'seat_id' => $seat->id,
@@ -265,7 +267,7 @@ class CinemaBookingTest extends TestCase
             'cinema_hall_id' => $showtime->cinema_hall_id,
             'showtime_start' => now()->addDay(),
         ]);
-        app(CinemaBookingService::class)->createMovieBooking([
+        app(MovieBookingService::class)->createMovieBooking([
             'customer_email' => 'past@example.com',
             'showtime_id' => $pastShowtime->id,
             'seat_id' => $seat->id,
@@ -297,7 +299,7 @@ class CinemaBookingTest extends TestCase
     {
         $this->actingAs(User::factory()->create());
         $movie = Movie::create(['title' => 'Old Title', 'rating' => '6']);
-        $hall = app(CinemaBookingService::class)->createCinemaHall([
+        $hall = app(CinemaHallService::class)->create([
             'hall_number' => '1',
             'seat_codes' => ['A1', 'A2'],
         ]);
@@ -326,7 +328,7 @@ class CinemaBookingTest extends TestCase
         [$showtime, $seat] = $this->makeShowtimeAndSeat();
         $hall = CinemaHall::query()->with('seats')->findOrFail($seat->cinema_hall_id);
         $hall->seats()->create(['seat_code' => 'A2']);
-        app(CinemaBookingService::class)->createMovieBooking([
+        app(MovieBookingService::class)->createMovieBooking([
             'customer_email' => 'customer@example.com',
             'showtime_id' => $showtime->id,
             'seat_id' => $seat->id,
@@ -345,7 +347,7 @@ class CinemaBookingTest extends TestCase
         $this->actingAs(User::factory()->create());
         [$showtime] = $this->makeShowtimeAndSeat();
         $movie = Movie::create(['title' => 'Second Movie', 'rating' => '7']);
-        $hall = app(CinemaBookingService::class)->createCinemaHall([
+        $hall = app(CinemaHallService::class)->create([
             'hall_number' => '2',
             'seat_codes' => ['B1'],
         ]);
@@ -363,7 +365,7 @@ class CinemaBookingTest extends TestCase
     {
         $this->actingAs(User::factory()->create());
         [$showtime, $seat] = $this->makeShowtimeAndSeat();
-        app(CinemaBookingService::class)->createMovieBooking([
+        app(MovieBookingService::class)->createMovieBooking([
             'customer_email' => 'customer@example.com',
             'showtime_id' => $showtime->id,
             'seat_id' => $seat->id,
@@ -372,7 +374,12 @@ class CinemaBookingTest extends TestCase
 
         $this->getJson('/movie-bookings/create')
             ->assertOk()
-            ->assertJsonPath('showtimes.0.bookings.0.seat_id', $seat->id);
+            ->assertJsonPath('showtimes.0.bookings.0.seat_id', $seat->id)
+            ->assertJsonPath('showtimes.0.movie.title', 'Test Movie')
+            ->assertJsonPath('showtimes.0.cinema_hall.hall_number', '1')
+            ->assertJsonPath('showtimes.0.cinema_hall.seats.0.seat_code', 'A1')
+            ->assertJsonMissingPath('showtimes.0.created_at')
+            ->assertJsonMissingPath('showtimes.0.cinema_hall.seats.0.created_at');
     }
 
     public function test_booking_search_filters_across_all_bookings(): void
@@ -383,7 +390,7 @@ class CinemaBookingTest extends TestCase
             'cinema_hall_id' => $seat->cinema_hall_id,
             'seat_code' => 'A2',
         ]);
-        $service = app(CinemaBookingService::class);
+        $service = app(MovieBookingService::class);
         $service->createMovieBooking([
             'customer_email' => 'find-me@example.com',
             'showtime_id' => $showtime->id,
@@ -400,7 +407,16 @@ class CinemaBookingTest extends TestCase
         $this->getJson('/movie-bookings?search=find-me')
             ->assertOk()
             ->assertJsonPath('total', 1)
-            ->assertJsonPath('data.0.customer_email', 'find-me@example.com');
+            ->assertJsonPath('data.0.customer_email', 'find-me@example.com')
+            ->assertJsonPath('data.0.showtime.movie.title', 'Test Movie')
+            ->assertJsonPath('data.0.showtime.cinema_hall.hall_number', '1')
+            ->assertJsonPath('data.0.seat.seat_code', 'A1')
+            ->assertJsonMissingPath('data.0.showtime.created_at')
+            ->assertJsonMissingPath('data.0.seat.created_at');
+
+        $this->getJson('/movie-bookings?search='.str_repeat('x', 101))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('search');
     }
 
     public function test_showtime_resources_create_and_update_showtimes(): void
@@ -439,7 +455,7 @@ class CinemaBookingTest extends TestCase
     {
         $this->actingAs(User::factory()->create());
         [$showtime, $seat] = $this->makeShowtimeAndSeat();
-        app(CinemaBookingService::class)->createMovieBooking([
+        app(MovieBookingService::class)->createMovieBooking([
             'customer_email' => 'customer@example.com',
             'showtime_id' => $showtime->id,
             'seat_id' => $seat->id,
@@ -462,7 +478,7 @@ class CinemaBookingTest extends TestCase
      */
     private function makeShowtimeAndSeat(): array
     {
-        $hall = app(CinemaBookingService::class)->createCinemaHall(['hall_number' => ' 1 ']);
+        $hall = app(CinemaHallService::class)->create(['hall_number' => '1']);
         $movie = Movie::create([
             'title' => 'Test Movie',
             'rating' => '8.5',
